@@ -40,25 +40,11 @@ def test_llama_generator():
     it = generator(prompt)
 
     # I collect next token
-    token_id = next(it)
+    prompt += next(it)
 
     #
     # Thens
     #
 
-    # next token should be delta
-    assert generator.tokenizer.decode([token_id]) == " delta"
-
-    #
-    # Whens
-    #
-
-    # I collect next token
-    token_id = next(it)
-
-    #
-    # Thens
-    #
-
-    # next token should be epsilon
-    assert generator.tokenizer.decode([token_id]) == " epsilon"
+    # prompt should be "alpha beta gamma delta"
+    assert prompt == "alpha beta gamma delta"

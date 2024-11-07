@@ -60,7 +60,7 @@ class Config(NamedTuple):
 
     top_p: float = 0.9
 
-    max_output_tokens: int = 500
+    max_completion_tokens: int = 64
 
 
 def config(
@@ -467,7 +467,7 @@ class LlamaGenerator:
 
         with torch.no_grad():
             # Generate output until we get a stop token or we exceed max_output_tokens.
-            for _ in range(self.config.max_output_tokens):
+            for _ in range(self.config.max_completion_tokens):
                 # Compute cos and sin rotation matrices once for entire sequence
                 r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
 
@@ -481,8 +481,11 @@ class LlamaGenerator:
                 if token_id in self.tokenizer.stop_tokens:
                     break
 
+                # Decode token_id
+                token = self.tokenizer.decode([token_id])
+
                 # Yield token
-                yield token_id
+                yield token
 
                 # Append to end of sequence
                 token_ids.append(token_id)
