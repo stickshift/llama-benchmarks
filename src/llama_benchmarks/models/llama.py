@@ -1,27 +1,30 @@
 """Minimalistic Llama3 utilities based on Meta's reference implementation."""
 
 import json
+import logging
 from pathlib import Path
-from typing import NamedTuple, Iterator, Any
+from typing import Any, Iterator, NamedTuple
 
-import numpy as np
 from llama_models.llama3.api.tokenizer import Tokenizer
 from llama_models.llama3.reference_impl.model import RMSNorm
+import numpy as np
 import torch
-from torch import nn
-from torch import Tensor
-from torch.nn.functional import silu, softmax
+from torch import Tensor, nn
+from torch.nn.functional import silu, softmax, scaled_dot_product_attention
 
-from llama_benchmarks.tools import default_arg, device as torch_device
+from llama_benchmarks.tools import default_arg, trace
+from llama_benchmarks.tools import device as torch_device
 
 __all__ = [
     "Config",
-    "config",
-    "LlamaLayer",
-    "LlamaHead",
     "LlamaGenerator",
+    "LlamaHead",
+    "LlamaLayer",
+    "config",
     "rope_frequencies",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class Config(NamedTuple):
@@ -109,7 +112,6 @@ def config(
 
 def rope_frequencies(config: Config, n: int):
     """Compute RoPE cos and sin rotation matrices."""
-
     # Hyperparameters
     base = config.rope_theta
     d = config.d_head
@@ -137,7 +139,6 @@ def rope_frequencies(config: Config, n: int):
 
 def rope_swap(x):
     """Maps [x0, x1, x2, x3] -> [-x1, x0, -x3, x2]."""
-
     # Preserve original shape
     s = x.shape
 
@@ -153,7 +154,6 @@ def rope_swap(x):
 
 def rope_rotate(x, r_cos, r_sin):
     """Rotate embeddings using RoPE transform."""
-
     return (x * r_cos) + (rope_swap(x) * r_sin)
 
 
@@ -162,11 +162,10 @@ class LlamaLayer(nn.Module):
         super().__init__()
 
         self.config = config
+        self.layer_id = layer_id
 
         # Attention normalization
-        self.normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(
-            config.device
-        )
+        self.normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
         self.normalize_attention.load_state_dict({
             "weight": checkpoint[f"layers.{layer_id}.attention_norm.weight"],
         })
@@ -216,9 +215,7 @@ class LlamaLayer(nn.Module):
         })
 
         # FFN normalization
-        self.normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(
-            config.device
-        )
+        self.normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
         self.normalize_ffn.load_state_dict({
             "weight": checkpoint[f"layers.{layer_id}.ffn_norm.weight"],
         })
@@ -255,56 +252,60 @@ class LlamaLayer(nn.Module):
             "weight": checkpoint[f"layers.{layer_id}.feed_forward.w2.weight"],
         })
 
-    def forward(
-        self, x: Tensor, r_cos: Tensor, r_sin: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    def forward(self, x: Tensor, r_cos: Tensor, r_sin: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         #
         # Attention
         #
+        residual = x
 
         # Normalize attention inputs
-        residual = x
         x = self.normalize_attention(x)
 
-        # Project embeddings to query, key, value spaces
-        q = self.w_q(x)
-        k = self.w_k(x)
-        v = self.w_v(x)
+        with trace(logger, f"{self.layer_id}: Projections"):
+            # Project embeddings to query, key, value spaces
+            q = self.w_q(x)
+            k = self.w_k(x)
+            v = self.w_v(x)
 
-        # Split attention heads
-        q = self._split_heads(q, self.config.n_heads)
-        k = self._split_heads(k, self.config.n_kv_heads)
-        v = self._split_heads(v, self.config.n_kv_heads)
+        with trace(logger, f"{self.layer_id}: Splitting"):
+            # Split attention heads
+            q = self._split_heads(q, self.config.n_heads)
+            k = self._split_heads(k, self.config.n_kv_heads)
+            v = self._split_heads(v, self.config.n_kv_heads)
 
-        # Expand key/value groups
-        reps = self.config.n_heads // self.config.n_kv_heads
-        k = k.repeat_interleave(reps, dim=0)
-        v = v.repeat_interleave(reps, dim=0)
+        with trace(logger, f"{self.layer_id}: Expanding"):
+            # Expand key/value groups
+            reps = self.config.n_heads // self.config.n_kv_heads
+            k = k.repeat_interleave(reps, dim=0)
+            v = v.repeat_interleave(reps, dim=0)
 
-        # Encode positions by rotating queries and keys
-        q = rope_rotate(q, r_cos, r_sin)
-        k = rope_rotate(k, r_cos, r_sin)
+        with trace(logger, f"{self.layer_id}: Encoding"):
+            # Encode positions by rotating queries and keys
+            q = rope_rotate(q, r_cos, r_sin)
+            k = rope_rotate(k, r_cos, r_sin)
 
-        # Compute masked attention bias M
-        n = len(x)
-        mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(
-            diagonal=0
-        )
-        m = torch.zeros(n, n, device=self.config.device).masked_fill_(
-            mask.logical_not(), float("-inf")
-        )
+        with trace(logger, f"{self.layer_id}: Computing"):
+            # Compute attention for all heads in parallel
+            a = scaled_dot_product_attention(q, k, v, is_causal=True)
 
-        # Compute attention for all heads in parallel
-        a = (
-            softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1)
-            @ v
-        )
+        #
+        # with trace(logger, f"{self.layer_id}: Masking"):
+        #     # Compute masked attention bias M
+        #     n = len(x)
+        #     mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(diagonal=0)
+        #     m = torch.zeros(n, n, device=self.config.device).masked_fill_(mask.logical_not(), float("-inf"))
+        #
+        # with trace(logger, f"{self.layer_id}: Computing"):
+        #     # Compute attention for all heads in parallel
+        #     a = softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1) @ v
 
-        # Combine attention heads
-        a = self._combine_heads(a)
+        with trace(logger, f"{self.layer_id}: Recombining"):
+            # Combine attention heads
+            a = self._combine_heads(a)
 
-        # Project attention representations back to model space
-        a = self.w_a(a)
+        with trace(logger, f"{self.layer_id}: Projecting attention outputs"):
+            # Project attention representations back to model space
+            a = self.w_a(a)
 
         # Combine attention representations with residual embeddings
         x = residual + a
@@ -313,8 +314,9 @@ class LlamaLayer(nn.Module):
         # FFN
         #
 
-        # Normalize FFN inputs
         residual = x
+
+        # Normalize FFN inputs
         x = self.normalize_ffn(x)
 
         # Apply SwiGLU transform
@@ -332,11 +334,7 @@ class LlamaLayer(nn.Module):
         return x.view(-1, n_heads, self.config.d_head).transpose(-3, -2)
 
     def _combine_heads(self, x):
-        return (
-            x.transpose(-3, -2)
-            .contiguous()
-            .view(-1, int(self.config.n_heads * self.config.d_head))
-        )
+        return x.transpose(-3, -2).contiguous().view(-1, int(self.config.n_heads * self.config.d_head))
 
 
 class LlamaHead(nn.Module):
@@ -348,9 +346,7 @@ class LlamaHead(nn.Module):
         self.config = config
 
         # Head normalization
-        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(
-            config.device
-        )
+        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
         self.normalize_head.load_state_dict({
             "weight": checkpoint["norm.weight"],
         })
@@ -447,20 +443,14 @@ class LlamaGenerator:
         )
         self.embeddings.load_state_dict({"weight": checkpoint["tok_embeddings.weight"]})
 
-        self.layers = nn.ModuleList(
-            LlamaLayer(config, checkpoint, layer_id)
-            for layer_id in range(config.n_layers)
-        )
+        self.layers = nn.ModuleList(LlamaLayer(config, checkpoint, layer_id) for layer_id in range(config.n_layers))
 
         self.head = LlamaHead(config, checkpoint)
 
     def __call__(self, prompt: str) -> Iterator[int]:
         """Generate tokens from prompt."""
-
         # Split raw text into tokens
-        token_ids = self.tokenizer.encode(
-            prompt, bos=True, eos=False, allowed_special="all"
-        )
+        token_ids = self.tokenizer.encode(prompt, bos=True, eos=False, allowed_special="all")
 
         # Generate output until we get a stop token or we exceed max_output_tokens.
         for _ in range(self.config.max_output_tokens):

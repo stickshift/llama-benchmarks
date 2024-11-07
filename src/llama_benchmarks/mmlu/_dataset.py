@@ -6,15 +6,15 @@ from typing import NamedTuple, Sequence
 from llama_benchmarks.tools import executor
 
 __all__ = [
-    "Question",
-    "Questions",
+    "OPTIONS",
     "Answer",
     "Answers",
-    "OPTIONS",
-    "load_dataset",
+    "Question",
+    "Questions",
     "answer_distribution",
-    "swap_answers",
     "generate_prompt",
+    "load_dataset",
+    "swap_answers",
 ]
 
 OPTIONS = ["A", "B", "C", "D"]
@@ -63,7 +63,6 @@ def load_dataset(
     n_questions: int | None = None,
 ) -> tuple[Questions, Questions]:
     """Load MMLU examples and questions."""
-
     examples = _load_segment("dev", dataset_path=dataset_path)
 
     questions = _load_segment("test", dataset_path=dataset_path)
@@ -72,7 +71,7 @@ def load_dataset(
     if n_questions is not None:
         questions = random.sample(questions, n_questions)
 
-        categories = set(q.category for q in questions)
+        categories = {q.category for q in questions}
         examples = tuple(e for e in examples if e.category in categories)
 
     return examples, questions
@@ -80,7 +79,6 @@ def load_dataset(
 
 def swap_answers(questions: Questions, option: str) -> Questions:
     """Swap answers for all questions to option."""
-
     # Validate
     if option not in OPTIONS:
         raise ValueError(f"Invalid option: {option}")
@@ -105,15 +103,11 @@ def swap_answers(questions: Questions, option: str) -> Questions:
 
 def answer_distribution(questions: Questions) -> dict[str, int]:
     """Calculate answer distribution for questions."""
-    distribution = {
-        option: sum(1 for q in questions if q.answer == option) for option in OPTIONS
-    }
+    distribution = {option: sum(1 for q in questions if q.answer == option) for option in OPTIONS}
     return distribution
 
 
-def generate_prompt(
-    examples: Questions, question: Question, n_shots: int | None = None
-):
+def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None):
     """Generate prompt for specified question."""
     # Select examples for category
     selected_examples = [e for e in examples if e.category == question.category]
@@ -126,15 +120,7 @@ def generate_prompt(
     content = f"The following are multiple choice questions (with answers) about {question.category}.\n\n"
     for row in selected_examples:
         content += (
-            f"Question: {row.question}\n"
-            f"\n"
-            f"A) {row.A}\n"
-            f"B) {row.B}\n"
-            f"C) {row.C}\n"
-            f"D) {row.D}\n"
-            f"\n"
-            f"Answer: {row.answer}\n"
-            f"\n"
+            f"Question: {row.question}\n\nA) {row.A}\nB) {row.B}\nC) {row.C}\nD) {row.D}\n\nAnswer: {row.answer}\n\n"
         )
 
     # Pose question
@@ -159,11 +145,10 @@ def generate_prompt(
 
 def _load_data_file(path: Path) -> Sequence[Question]:
     """Load a single MMLU data file."""
-
     # Infer category from file name: x_y_z_test.csv -> x y z
     category = " ".join(path.stem.split("_")[0:-1])
 
-    with open(path, "r") as csv_file:
+    with open(path, mode="r", encoding="utf-8") as csv_file:
         reader = csv.reader(csv_file)
         questions = tuple(Question(category, *row) for row in reader)
 
@@ -172,7 +157,6 @@ def _load_data_file(path: Path) -> Sequence[Question]:
 
 def _load_segment(segment: str, dataset_path: Path) -> Sequence[Question]:
     """Load segment of MMLU dataset."""
-
     # Sort paths to ensure consistent order
     paths = sorted(path for path in dataset_path.glob(f"{segment}/*.csv"))
 

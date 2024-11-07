@@ -22,7 +22,7 @@ def test_load_dataset(mmlu_dataset_path: Path):
     assert len(questions) == 14042
 
     # There should be 57 categories
-    assert len(set(q.category for q in examples)) == 57
+    assert len({q.category for q in examples}) == 57
 
     # Each category should have 5 examples
     counts = Counter(q.category for q in examples)
@@ -62,9 +62,7 @@ def test_load_dataset_sample(mmlu_dataset_path: Path):
     #
 
     # I load sample of mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(
-        mmlu_dataset_path, n_questions=n_questions
-    )
+    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
 
     #
     # Thens
@@ -74,7 +72,7 @@ def test_load_dataset_sample(mmlu_dataset_path: Path):
     assert len(questions) == n_questions
 
     # Examples should be limited to the relevant categories
-    relevant_categories = set(q.category for q in questions)
+    relevant_categories = {q.category for q in questions}
     assert all(q.category in relevant_categories for q in examples)
 
 

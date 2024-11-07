@@ -2,7 +2,7 @@ import hashlib
 from itertools import islice
 from secrets import token_hex
 import subprocess
-from typing import Any, Iterable, Callable
+from typing import Any, Callable, Iterable
 
 __all__ = [
     "default_arg",
