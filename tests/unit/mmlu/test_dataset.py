@@ -5,20 +5,14 @@ import numpy as np
 import llama_benchmarks as llb
 
 
-def test_load_dataset(datasets_path: Path):
-    #
-    # Givens
-    #
-
-    # Path to mmlu dataset
-    dataset_path = datasets_path / "mmlu"
+def test_load_dataset(mmlu_dataset_path: Path):
 
     #
     # Whens
     #
 
     # I load mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(dataset_path)
+    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path)
 
     #
     # Thens
@@ -51,3 +45,35 @@ def test_load_dataset(datasets_path: Path):
     for column in expected_columns:
         assert examples[column].isna().sum() == 0
         assert questions[column].isna().sum() == 0
+
+
+def test_swap_answers(mmlu_dataset_path: Path):
+
+    #
+    # Whens
+    #
+
+    # I load mmlu dataset
+    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path)
+
+    #
+    # Thens
+    #
+
+    # Answers should be distributed across all options
+    distribution = llb.mmlu.answer_distribution(questions)
+    assert np.all(distribution[option] > 0 for option in llb.mmlu.OPTIONS)
+
+    #
+    # Whens
+    #
+
+    # I swap answers to option "A"
+    questions_a = llb.mmlu.swap_answers(questions, "A")
+
+    #
+    # Thens
+    #
+
+    # Answers should all be A
+    assert (questions_a.answer == "A").all()

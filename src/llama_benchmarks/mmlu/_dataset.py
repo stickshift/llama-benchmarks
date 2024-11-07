@@ -1,11 +1,17 @@
+from importlib.metadata import distribution
 from pathlib import Path
 
 import pandas as pd
 from pandas import DataFrame
 
 __all__ = [
+    "OPTIONS",
     "load_dataset",
+    "answer_distribution",
+    "swap_answers",
 ]
+
+OPTIONS = ["A", "B", "C", "D"]
 
 
 def load_dataset(dataset_path: Path) -> tuple[DataFrame, DataFrame]:
@@ -16,6 +22,41 @@ def load_dataset(dataset_path: Path) -> tuple[DataFrame, DataFrame]:
 
     return examples, questions
 
+
+def swap_answers(questions: DataFrame, option: str) -> DataFrame:
+    """Swap answers for all questions to option."""
+
+    # Validate
+    if option not in OPTIONS:
+        raise ValueError(f"Invalid option: {option}")
+
+    # Since the columns we're switching are different for each row, we have to swap them one by one
+    rows = []
+    for _, input_row in questions.iterrows():
+        # Clone input row
+        output_row = input_row.copy()
+
+        value = output_row[option]
+        output_row[option] = output_row[output_row.answer]
+        output_row[output_row.answer] = value
+        output_row.answer = option
+
+        rows.append(output_row)
+
+    return DataFrame(rows)
+
+
+def answer_distribution(questions: DataFrame) -> dict[str, int]:
+    """Calculate answer distribution for questions."""
+    distribution = {
+        option: questions[questions.answer == option].answer.count() for option in OPTIONS
+    }
+    return distribution
+
+
+#-------------------------------------------------------------------------------
+# Utilities
+#-------------------------------------------------------------------------------
 
 def _load_segment(segment: str, dataset_path: Path) -> DataFrame:
     """Load segment of MMLU dataset."""
