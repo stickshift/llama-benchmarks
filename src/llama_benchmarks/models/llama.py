@@ -2,48 +2,58 @@
 
 import json
 from pathlib import Path
+from typing import NamedTuple, Iterator, Any
 
+import numpy as np
 from llama_models.llama3.api.tokenizer import Tokenizer
 from llama_models.llama3.reference_impl.model import RMSNorm
-import numpy as np
-from pydantic import BaseModel, ConfigDict
 import torch
 from torch import nn
+from torch import Tensor
 from torch.nn.functional import silu, softmax
 
-from llama_benchmarks.tools import default_arg, take, device as torch_device
+from llama_benchmarks.tools import default_arg, device as torch_device
 
 __all__ = [
     "Config",
     "config",
-    "load_state",
-    "tokenizer",
-    "embeddings",
-    "context_layers",
-    "head",
+    "LlamaModel",
 ]
 
 
-class Config(BaseModel):
+class Config(NamedTuple):
     """Custom Llama3 config."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     device: torch.device
+
     checkpoint_path: Path
+
     vocab_size: int
+
     d_model: int
+
     d_head: int
+
     d_ffn: int
+
     n_layers: int
+
     n_heads: int
+
     n_kv_heads: int
+
     rms_norm_eps: float
+
     rope_theta: float
+
     max_seq_len: int
+
     temperature: float | None = 0.6
+
     top_k: int = 50
+
     top_p: float = 0.9
+
     max_output_tokens: int = 500
 
 
@@ -92,92 +102,6 @@ def config(
     data = defaults | kwargs
 
     return Config(**data)
-
-
-def tokenizer(config: Config) -> Tokenizer:
-    """Load Llama3 tokenizer from checkpoint."""
-
-    # Load tokenizer model from checkpoint
-    return Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
-
-
-def embeddings(x, *, config: Config, checkpoint):
-    # Initialize embeddings lookup table
-    layer = nn.Embedding(
-        num_embeddings=config.vocab_size,
-        embedding_dim=config.d_model,
-        device=config.device,
-    )
-
-    # Load pre-trained state
-    load_state(layer, "embeddings", checkpoint=checkpoint)
-
-    return layer(x)
-
-
-def load_state(*args, checkpoint, layer=None):
-    # Defaults
-    layer = default_arg(layer, lambda: 0)
-
-    for module, key in take(2, args):
-        match key:
-            # Embeddings
-            case "embeddings":
-                module.load_state_dict({
-                    "weight": checkpoint["tok_embeddings.weight"],
-                })
-
-            # Attention
-            case "normalize_attention":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.attention_norm.weight"],
-                })
-            case "w_q":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.attention.wq.weight"],
-                })
-            case "w_k":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.attention.wk.weight"],
-                })
-            case "w_v":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.attention.wv.weight"],
-                })
-            case "w_a":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.attention.wo.weight"],
-                })
-
-            # FFN
-            case "normalize_ffn":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.ffn_norm.weight"],
-                })
-            case "w_g":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.feed_forward.w1.weight"],
-                })
-            case "w_h":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.feed_forward.w3.weight"],
-                })
-            case "w_f":
-                module.load_state_dict({
-                    "weight": checkpoint[f"layers.{layer}.feed_forward.w2.weight"],
-                })
-
-            # Head
-            case "normalize_head":
-                module.load_state_dict({
-                    "weight": checkpoint["norm.weight"],
-                })
-            case "w_head":
-                module.load_state_dict({
-                    "weight": checkpoint["output.weight"],
-                })
-            case _:
-                raise ValueError(f"Unexpected key {key}")
 
 
 def rope_frequencies(config: Config, n: int):
@@ -230,122 +154,122 @@ def rope_rotate(x, r_cos, r_sin):
     return (x * r_cos) + (rope_swap(x) * r_sin)
 
 
-def split_heads(config: Config, x, n_heads):
-    return x.view(-1, n_heads, config.d_head).transpose(-3, -2)
+class LlamaLayer(nn.Module):
 
+    def __init__(self, config: Config, checkpoint: dict[str, Any], layer_id: int):
+        super().__init__()
 
-def combine_heads(config: Config, x):
-    return (
-        x.transpose(-3, -2).contiguous().view(-1, int(config.n_heads * config.d_head))
-    )
+        self.config = config
 
+        # Attention normalization
+        self.normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_attention.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.attention_norm.weight"],
+        })
 
-def context_layers(x, *, config: Config, checkpoint):
-    # Compute cos and sin rotation matrices
-    r_cos, r_sin = rope_frequencies(config, len(x))
-
-    # Attention normalization
-    normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
-
-    # Query, key, value projections
-    w_q = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.n_heads * config.d_head,
-        bias=False,
-        device=config.device,
-    )
-    w_k = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.n_kv_heads * config.d_head,
-        bias=False,
-        device=config.device,
-    )
-    w_v = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.n_kv_heads * config.d_head,
-        bias=False,
-        device=config.device,
-    )
-
-    # Attention output projection
-    w_a = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.d_model,
-        bias=False,
-        device=config.device,
-    )
-
-    # FFN normalization
-    normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
-
-    # SwiGLU FFN
-    w_h = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.d_ffn,
-        bias=False,
-        device=config.device,
-    )
-    w_g = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.d_ffn,
-        bias=False,
-        device=config.device,
-    )
-
-    # FFN output projection
-    w_f = nn.Linear(
-        in_features=config.d_ffn,
-        out_features=config.d_model,
-        bias=False,
-        device=config.device,
-    )
-
-    # Apply layer logic in a loop
-    for layer in range(config.n_layers):
-        # Load pre-trained state for layer
-        load_state(
-            normalize_attention,
-            "normalize_attention",
-            w_q,
-            "w_q",
-            w_k,
-            "w_k",
-            w_v,
-            "w_v",
-            w_a,
-            "w_a",
-            normalize_ffn,
-            "normalize_ffn",
-            w_g,
-            "w_g",
-            w_h,
-            "w_h",
-            w_f,
-            "w_f",
-            checkpoint=checkpoint,
-            layer=layer,
+        # Query projection
+        self.w_q = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.n_heads * config.d_head,
+            bias=False,
+            device=config.device,
         )
+        self.w_q.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.attention.wq.weight"],
+        })
 
+        # Key projection
+        self.w_k = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.n_kv_heads * config.d_head,
+            bias=False,
+            device=config.device,
+        )
+        self.w_k.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.attention.wk.weight"],
+        })
+
+        # Value projection
+        self.w_v = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.n_kv_heads * config.d_head,
+            bias=False,
+            device=config.device,
+        )
+        self.w_v.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.attention.wv.weight"],
+        })
+
+        # Attention output projection
+        self.w_a = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.d_model,
+            bias=False,
+            device=config.device,
+        )
+        self.w_a.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.attention.wo.weight"],
+        })
+
+        # FFN normalization
+        self.normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_ffn.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.ffn_norm.weight"],
+        })
+
+        # SwiGLU FFN
+        self.w_h = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.d_ffn,
+            bias=False,
+            device=config.device,
+        )
+        self.w_h.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.feed_forward.w3.weight"],
+        })
+
+        self.w_g = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.d_ffn,
+            bias=False,
+            device=config.device,
+        )
+        self.w_g.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.feed_forward.w1.weight"],
+        })
+
+        # FFN output projection
+        self.w_f = nn.Linear(
+            in_features=config.d_ffn,
+            out_features=config.d_model,
+            bias=False,
+            device=config.device,
+        )
+        self.w_f.load_state_dict({
+            "weight": checkpoint[f"layers.{layer_id}.feed_forward.w2.weight"],
+        })
+
+    def forward(self, x: Tensor, r_cos: Tensor, r_sin: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         #
         # Attention
         #
 
         # Normalize attention inputs
         residual = x
-        x = normalize_attention(x)
+        x = self.normalize_attention(x)
 
         # Project embeddings to query, key, value spaces
-        q = w_q(x)
-        k = w_k(x)
-        v = w_v(x)
+        q = self.w_q(x)
+        k = self.w_k(x)
+        v = self.w_v(x)
 
         # Split attention heads
-        q = split_heads(config, q, config.n_heads)
-        k = split_heads(config, k, config.n_kv_heads)
-        v = split_heads(config, v, config.n_kv_heads)
+        q = self._split_heads(q, self.config.n_heads)
+        k = self._split_heads(k, self.config.n_kv_heads)
+        v = self._split_heads(v, self.config.n_kv_heads)
 
         # Expand key/value groups
-        reps = config.n_heads // config.n_kv_heads
+        reps = self.config.n_heads // self.config.n_kv_heads
         k = k.repeat_interleave(reps, dim=0)
         v = v.repeat_interleave(reps, dim=0)
 
@@ -355,19 +279,19 @@ def context_layers(x, *, config: Config, checkpoint):
 
         # Compute masked attention bias M
         n = len(x)
-        mask = torch.ones(n, n, dtype=torch.bool, device=config.device).tril(diagonal=0)
-        m = torch.zeros(n, n, device=config.device).masked_fill_(
+        mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(diagonal=0)
+        m = torch.zeros(n, n, device=self.config.device).masked_fill_(
             mask.logical_not(), float("-inf")
         )
 
         # Compute attention for all heads in parallel
-        a = softmax(q @ k.transpose(-2, -1) / np.sqrt(config.d_head) + m, dim=-1) @ v
+        a = softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1) @ v
 
         # Combine attention heads
-        a = combine_heads(config, a)
+        a = self._combine_heads(a)
 
         # Project attention representations back to model space
-        a = w_a(a)
+        a = self.w_a(a)
 
         # Combine attention representations with residual embeddings
         x = residual + a
@@ -378,94 +302,177 @@ def context_layers(x, *, config: Config, checkpoint):
 
         # Normalize FFN inputs
         residual = x
-        x = normalize_ffn(x)
+        x = self.normalize_ffn(x)
 
         # Apply SwiGLU transform
-        f = silu(w_g(x)) * w_h(x)
+        f = silu(self.w_g(x)) * self.w_h(x)
 
         # Project FFN representations back to model space
-        f = w_f(f)
+        f = self.w_f(f)
 
         # Combine FFN representations with residual embeddings
         x = residual + f
 
-    return x
+        return x
+
+    def _split_heads(self, x: Tensor, n_heads: int):
+        return x.view(-1, n_heads, self.config.d_head).transpose(-3, -2)
+
+    def _combine_heads(self, x):
+        return x.transpose(-3, -2).contiguous().view(-1, int(self.config.n_heads * self.config.d_head))
 
 
-def head(x, *, config: Config, checkpoint):
-    # Head normalization
-    normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+class LlamaHead(nn.Module):
 
-    # Output projection
-    w_head = nn.Linear(
-        in_features=config.d_model,
-        out_features=config.vocab_size,
-        bias=False,
-        device=config.device,
-    )
+    def __init__(self, config: Config, checkpoint: dict[str, Any]):
+        super().__init__()
 
-    # Load pre-trained weights
-    load_state(
-        normalize_head,
-        "normalize_head",
-        w_head,
-        "w_head",
-        checkpoint=checkpoint,
-    )
+        self.config = config
 
-    # Normalize head inputs
-    x = normalize_head(x)
+        # Head normalization
+        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_head.load_state_dict({
+            "weight": checkpoint["norm.weight"],
+        })
 
-    # Use last embedding to represent the entire sequence
-    x = x[-1]
+        # Output projection
+        self.w_head = nn.Linear(
+            in_features=config.d_model,
+            out_features=config.vocab_size,
+            bias=False,
+            device=config.device,
+        )
+        self.w_head.load_state_dict({
+            "weight": checkpoint["output.weight"],
+        })
 
-    # Project outputs to token space
-    x = w_head(x)
+    def forward(self, x: Tensor) -> int:
 
-    #
-    # Temperature
-    #
+        # Normalize head inputs
+        x = self.normalize_head(x)
 
-    # Apply temperature
-    x = x / config.temperature
+        # Use last embedding to represent the entire sequence
+        x = x[-1]
 
-    #
-    # Ranking
-    #
+        # Project outputs to token space
+        x = self.w_head(x)
 
-    # Convert logits to probabilities
-    probs = softmax(x, dim=-1)
+        #
+        # Temperature
+        #
 
-    # Sort probabilities in descending order
-    probs, indices = probs.sort(descending=True)
+        # Apply temperature
+        x = x / self.config.temperature
 
-    #
-    # Top K
-    #
+        #
+        # Ranking
+        #
 
-    # Retain top k tokens
-    probs = probs[: config.top_k]
+        # Convert logits to probabilities
+        probs = softmax(x, dim=-1)
 
-    #
-    # Top P
-    #
+        # Sort probabilities in descending order
+        probs, indices = probs.sort(descending=True)
 
-    # Find cutoff where cumulative probability exceeds top_p
-    cumulative_mask = probs.cumsum(dim=-1) > config.top_p
-    threshold_index = torch.argmax(cumulative_mask).item()
+        #
+        # Top K
+        #
 
-    # Only apply threshold if top_p was exceeded
-    if cumulative_mask.any():
-        probs = probs[: threshold_index + 1]
+        # Retain top k tokens
+        probs = probs[: self.config.top_k]
 
-    #
-    # Random Selection
-    #
+        #
+        # Top P
+        #
 
-    # Sample from remaining tokens weighted by probability
-    sampled_index = torch.multinomial(probs, 1)
+        # Find cutoff where cumulative probability exceeds top_p
+        cumulative_mask = probs.cumsum(dim=-1) > self.config.top_p
+        threshold_index = torch.argmax(cumulative_mask).item()
 
-    # Convert sampled_index to original logits
-    token_id = indices[sampled_index]
+        # Only apply threshold if top_p was exceeded
+        if cumulative_mask.any():
+            probs = probs[: threshold_index + 1]
 
-    return token_id.item()
+        #
+        # Random Selection
+        #
+
+        # Sample from remaining tokens weighted by probability
+        sampled_index = torch.multinomial(probs, 1)
+
+        # Convert sampled_index to original logits
+        token_id = indices[sampled_index]
+
+        return token_id.item()
+
+
+class LlamaModel:
+
+    config: Config
+
+    tokenizer: Tokenizer
+
+    embeddings: nn.Embedding
+
+    layers: nn.ModuleList
+
+    head: LlamaHead
+
+    def __init__(self, config: Config):
+
+        # Load checkpoint
+        checkpoint = torch.load(
+            config.checkpoint_path / "consolidated.00.pth",
+            weights_only=True,
+            map_location=config.device,
+        )
+
+        self.config = config
+
+        self.tokenizer = Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
+
+        self.embeddings = nn.Embedding(
+            num_embeddings=config.vocab_size,
+            embedding_dim=config.d_model,
+            device=config.device,
+        )
+        self.embeddings.load_state_dict({"weight": checkpoint["tok_embeddings.weight"]})
+
+        self.layers = nn.ModuleList(LlamaLayer(config, checkpoint, l) for l in range(config.n_layers))
+
+        self.head = LlamaHead(config, checkpoint)
+
+    def __call__(self, prompt: str) -> Iterator[int]:
+        """Generate tokens from prompt."""
+
+        # Split raw text into tokens
+        token_ids = self.tokenizer.encode(prompt, bos=True, eos=False, allowed_special="all")
+
+        # Generate output until we get a stop token or we exceed max_output_tokens.
+        for _ in range(self.config.max_output_tokens):
+
+            # Compute cos and sin rotation matrices once for entire sequence
+            r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
+
+            # Load token ids into a tensor
+            x = torch.tensor(token_ids, device=self.config.device)
+
+            # Map tokens to embeddings
+            x = self.embeddings(x)
+
+            # Transform token embeddings to semantic embeddings
+            for layer in self.layers:
+                x = layer(x, r_cos, r_sin)
+
+            # Head
+            token_id = self.head(x)
+
+            # Check stopping criteria
+            if token_id in self.tokenizer.stop_tokens:
+                break
+
+            # Yield token
+            yield token_id
+
+            # Append to end of sequence
+            token_ids.append(token_id)
