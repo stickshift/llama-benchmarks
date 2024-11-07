@@ -1,5 +1,5 @@
-from ._dataset import load_dataset, OPTIONS, answer_distribution, swap_answers, Question, Answer
-from ._llama import LlamaGenerator
+from ._dataset import load_dataset, OPTIONS, answer_distribution, swap_answers, Question, Answer, generate_prompt
+from ._llama import MMLULlamaGenerator
 
 __all__ = [
     "Question",
@@ -8,5 +8,6 @@ __all__ = [
     "load_dataset",
     "answer_distribution",
     "swap_answers",
-    "LlamaGenerator",
+    "MMLULlamaGenerator",
+    "generate_prompt",
 ]

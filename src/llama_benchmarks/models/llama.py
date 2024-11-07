@@ -17,7 +17,10 @@ from llama_benchmarks.tools import default_arg, device as torch_device
 __all__ = [
     "Config",
     "config",
-    "LlamaModel",
+    "LlamaLayer",
+    "LlamaHead",
+    "LlamaGenerator",
+    "rope_frequencies",
 ]
 
 
@@ -407,7 +410,7 @@ class LlamaHead(nn.Module):
         return token_id.item()
 
 
-class LlamaModel:
+class LlamaGenerator:
     """General purpose Llama generative model."""
 
     def __init__(self, config: Config):

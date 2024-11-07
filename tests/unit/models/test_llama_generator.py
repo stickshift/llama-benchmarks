@@ -1,5 +1,5 @@
 from llama_benchmarks.models import llama
-from llama_benchmarks.models.llama import LlamaModel
+from llama_benchmarks.models.llama import LlamaGenerator
 
 
 def test_config():
@@ -22,7 +22,7 @@ def test_config():
     assert config.vocab_size == 128256
 
 
-def test_llama_model():
+def test_llama_generator():
     #
     # Givens
     #
@@ -30,15 +30,15 @@ def test_llama_model():
     # Prompt
     prompt = "alpha beta gamma"
 
-    # I created a Llama 3.2 3B LlamaModel
-    model = LlamaModel(llama.config("Llama3.2-3B"))
+    # I created a Llama 3.2 3B generator
+    generator = LlamaGenerator(llama.config("Llama3.2-3B"))
 
     #
     # Whens
     #
 
     # I start token generation
-    it = model(prompt)
+    it = generator(prompt)
 
     # I collect next token
     token_id = next(it)
@@ -48,7 +48,7 @@ def test_llama_model():
     #
 
     # next token should be delta
-    assert model.tokenizer.decode([token_id]) == " delta"
+    assert generator.tokenizer.decode([token_id]) == " delta"
 
     #
     # Whens
@@ -62,4 +62,4 @@ def test_llama_model():
     #
 
     # next token should be epsilon
-    assert model.tokenizer.decode([token_id]) == " epsilon"
+    assert generator.tokenizer.decode([token_id]) == " epsilon"

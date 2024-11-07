@@ -1,4 +1,3 @@
-from concurrent.futures import as_completed
 import csv
 from pathlib import Path
 import random
@@ -15,6 +14,7 @@ __all__ = [
     "load_dataset",
     "answer_distribution",
     "swap_answers",
+    "generate_prompt",
 ]
 
 OPTIONS = ["A", "B", "C", "D"]
@@ -107,6 +107,45 @@ def answer_distribution(questions: Questions) -> dict[str, int]:
     return distribution
 
 
+def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None):
+    """Generate prompt for specified question."""
+    # Select examples for category
+    selected_examples = [e for e in examples if e.category == question.category]
+
+    # Select n_shots if specified
+    if n_shots is not None:
+        selected_examples = random.sample(selected_examples, n_shots)
+
+    # Start with examples
+    content = f"The following are multiple choice questions (with answers) about {question.category}.\n\n"
+    for row in selected_examples:
+        content += (
+            f"Question: {row.question}\n"
+            f"\n"
+            f"A) {row.A}\n"
+            f"B) {row.B}\n"
+            f"C) {row.C}\n"
+            f"D) {row.D}\n"
+            f"\n"
+            f"Answer: {row.answer}\n"
+            f"\n"
+        )
+
+    # Pose question
+    content += (
+        f"Question: {question.question}\n"
+        f"\n"
+        f"A) {question.A}\n"
+        f"B) {question.B}\n"
+        f"C) {question.C}\n"
+        f"D) {question.D}\n"
+        f"\n"
+        f"Answer: "
+    )
+
+    return content
+
+
 # -------------------------------------------------------------------------------
 # Utilities
 # -------------------------------------------------------------------------------
@@ -137,7 +176,7 @@ def _load_segment(segment: str, dataset_path: Path) -> Sequence[Question]:
 
     # Collect results
     questions = ()
-    for future in as_completed(futures):
+    for future in futures:
         questions += future.result()
 
     return questions

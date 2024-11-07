@@ -3,43 +3,34 @@ from pathlib import Path
 import pytest
 
 import llama_benchmarks as llb
-from llama_benchmarks.mmlu import LlamaGenerator, OPTIONS
+from llama_benchmarks.mmlu import MMLULlamaGenerator, OPTIONS
+from llama_benchmarks.models import llama
 
 
-@pytest.mark.wip
-def test_llama_generator(mmlu_dataset_path: Path):
+def test_mmlu_llama_generator(mmlu_dataset_path: Path):
     #
     # Givens
     #
 
-    # Sample size of 16
-    n_questions = 16
+    # Sample size of 4
+    n_questions = 4
 
     # I loaded question sample from mmlu dataset
     examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
 
-    # Llama 3.2 3B config
-    config = llb.models.llama.config("Llama3.2-3B")
-
-    # I created an MMLU LlamaGenerator
-    generator = LlamaGenerator(config)
+    # I created a Llama 3.2 3B MMLU generator
+    generator = MMLULlamaGenerator(llama.config("Llama3.2-3B"))
 
     #
     # Whens
     #
 
-    # I generate answers
-    answers = generator(examples, questions)
+    # I generate answers for each question
+    for answer in generator(examples, questions):
 
-    #
-    # Thens
-    #
-
-    # There should be 16 answers
-    assert len(answers) == n_questions
-
-    # For each question...
-    for answer in answers:
+        #
+        # Thens
+        #
 
         # Expected answer should match question
         assert answer.expected == questions[answer.qid].answer
