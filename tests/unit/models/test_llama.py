@@ -1,7 +1,5 @@
-import llama_benchmarks as llb
 from llama_benchmarks.models import llama
 from llama_benchmarks.models.llama import LlamaModel
-
 
 
 def test_config():

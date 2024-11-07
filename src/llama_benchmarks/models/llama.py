@@ -323,6 +323,7 @@ class LlamaLayer(nn.Module):
 
 
 class LlamaHead(nn.Module):
+    """General purpose Llama head."""
 
     def __init__(self, config: Config, checkpoint: dict[str, Any]):
         super().__init__()
@@ -407,16 +408,7 @@ class LlamaHead(nn.Module):
 
 
 class LlamaModel:
-
-    config: Config
-
-    tokenizer: Tokenizer
-
-    embeddings: nn.Embedding
-
-    layers: nn.ModuleList
-
-    head: LlamaHead
+    """General purpose Llama generative model."""
 
     def __init__(self, config: Config):
 
