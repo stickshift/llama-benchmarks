@@ -64,12 +64,6 @@ class MMLULlamaHead(nn.Module):
         # Select logits for MMLU options
         logits = torch.tensor([x[self.token_ids[option]] for option in OPTIONS], device=x.device)
 
-        # Verify the top token id is one of the valid MMLU options
-        token_id = torch.argmax(x)
-        if token_id not in self.token_ids.values():
-            logger.warning(f"Top token id {token_id} is not in MMLU options {self.token_ids.values()}")
-            logger.warning(f"{token_id} = {x[token_id]}, vs, {logits}")
-
         # Convert to scores
         scores = softmax(logits, dim=-1)
 
