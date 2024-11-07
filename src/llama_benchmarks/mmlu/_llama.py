@@ -75,7 +75,6 @@ class MMLULlamaGenerator:
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
             weights_only=True,
-            map_location=config.device,
         )
 
         self.config = config
@@ -96,37 +95,31 @@ class MMLULlamaGenerator:
     def __call__(self, examples: Questions, questions: Questions) -> Iterator[Answer]:
         """Generate answers."""
         for qid, question in enumerate(questions):
-            with trace(logger, f"{qid}: Generating prompt"):
+            with trace(logger, f"Answering question {qid}"):
                 # Generate prompt
                 prompt = generate_prompt(examples, question)
 
-            with trace(logger, f"{qid}: Tokenizing"):
                 # Split raw text into tokens
                 token_ids = self.tokenizer.encode(prompt, bos=True, eos=False)
 
-            with trace(logger, f"{qid}: Computing rope frequencies"):
                 # Compute cos and sin rotation matrices
                 r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
 
-            with trace(logger, f"{qid}: Loading tokens"):
                 # Load token ids into a tensor
                 x = torch.tensor(token_ids, device=self.config.device)
 
-            with trace(logger, f"{qid}: Embeddings"):
                 # Map tokens to embeddings
                 x = self.embeddings(x)
 
-            with trace(logger, f"{qid}: Context Layers"):
                 # Transform token embeddings to semantic embeddings
                 for layer in self.layers:
                     x = layer(x, r_cos, r_sin)
 
-            with trace(logger, f"{qid}: Head"):
                 # Head
                 logits = self.head(x)
 
-            # Calculate answer
-            actual = max(logits, key=logits.get)
+                # Calculate answer
+                actual = max(logits, key=logits.get)
 
             # Yield answer
             yield Answer(
@@ -136,5 +129,3 @@ class MMLULlamaGenerator:
                 logits=logits,
                 correct=(actual == question.answer),
             )
-
-            logger.info(f"Answered question {qid}: {question.question}")

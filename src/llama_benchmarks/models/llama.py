@@ -10,9 +10,9 @@ from llama_models.llama3.reference_impl.model import RMSNorm
 import numpy as np
 import torch
 from torch import Tensor, nn
-from torch.nn.functional import silu, softmax, scaled_dot_product_attention
+from torch.nn.functional import silu, softmax
 
-from llama_benchmarks.tools import default_arg, trace
+from llama_benchmarks.tools import default_arg
 from llama_benchmarks.tools import device as torch_device
 
 __all__ = [
@@ -261,51 +261,38 @@ class LlamaLayer(nn.Module):
         # Normalize attention inputs
         x = self.normalize_attention(x)
 
-        with trace(logger, f"{self.layer_id}: Projections"):
-            # Project embeddings to query, key, value spaces
-            q = self.w_q(x)
-            k = self.w_k(x)
-            v = self.w_v(x)
+        # Project embeddings to query, key, value spaces
+        q = self.w_q(x)
+        k = self.w_k(x)
+        v = self.w_v(x)
 
-        with trace(logger, f"{self.layer_id}: Splitting"):
-            # Split attention heads
-            q = self._split_heads(q, self.config.n_heads)
-            k = self._split_heads(k, self.config.n_kv_heads)
-            v = self._split_heads(v, self.config.n_kv_heads)
+        # Split attention heads
+        q = self._split_heads(q, self.config.n_heads)
+        k = self._split_heads(k, self.config.n_kv_heads)
+        v = self._split_heads(v, self.config.n_kv_heads)
 
-        with trace(logger, f"{self.layer_id}: Expanding"):
-            # Expand key/value groups
-            reps = self.config.n_heads // self.config.n_kv_heads
-            k = k.repeat_interleave(reps, dim=0)
-            v = v.repeat_interleave(reps, dim=0)
+        # Expand key/value groups
+        reps = self.config.n_heads // self.config.n_kv_heads
+        k = k.repeat_interleave(reps, dim=0)
+        v = v.repeat_interleave(reps, dim=0)
 
-        with trace(logger, f"{self.layer_id}: Encoding"):
-            # Encode positions by rotating queries and keys
-            q = rope_rotate(q, r_cos, r_sin)
-            k = rope_rotate(k, r_cos, r_sin)
+        # Encode positions by rotating queries and keys
+        q = rope_rotate(q, r_cos, r_sin)
+        k = rope_rotate(k, r_cos, r_sin)
 
-        with trace(logger, f"{self.layer_id}: Computing"):
-            # Compute attention for all heads in parallel
-            a = scaled_dot_product_attention(q, k, v, is_causal=True)
+        # Compute masked attention bias M
+        n = len(x)
+        mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(diagonal=0)
+        m = torch.zeros(n, n, device=self.config.device).masked_fill_(mask.logical_not(), float("-inf"))
 
-        #
-        # with trace(logger, f"{self.layer_id}: Masking"):
-        #     # Compute masked attention bias M
-        #     n = len(x)
-        #     mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(diagonal=0)
-        #     m = torch.zeros(n, n, device=self.config.device).masked_fill_(mask.logical_not(), float("-inf"))
-        #
-        # with trace(logger, f"{self.layer_id}: Computing"):
-        #     # Compute attention for all heads in parallel
-        #     a = softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1) @ v
+        # Compute attention for all heads in parallel
+        a = softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1) @ v
 
-        with trace(logger, f"{self.layer_id}: Recombining"):
-            # Combine attention heads
-            a = self._combine_heads(a)
+        # Combine attention heads
+        a = self._combine_heads(a)
 
-        with trace(logger, f"{self.layer_id}: Projecting attention outputs"):
-            # Project attention representations back to model space
-            a = self.w_a(a)
+        # Project attention representations back to model space
+        a = self.w_a(a)
 
         # Combine attention representations with residual embeddings
         x = residual + a
@@ -429,7 +416,6 @@ class LlamaGenerator:
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
             weights_only=True,
-            map_location=config.device,
         )
 
         self.config = config
