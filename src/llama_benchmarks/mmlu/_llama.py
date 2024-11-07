@@ -5,6 +5,7 @@ from llama_models.llama3.api.tokenizer import Tokenizer
 from llama_models.llama3.reference_impl.model import RMSNorm
 import torch
 from torch import Tensor, nn
+from torch.nn.functional import softmax
 
 from llama_benchmarks.models.llama import (
     Config,
@@ -60,10 +61,25 @@ class MMLULlamaHead(nn.Module):
         # Project outputs to token space
         x = self.w_head(x)
 
-        # Lookup logits for MMLU token ids
-        logits = {option: x[token_id] for option, token_id in self.token_ids.items()}
+        # Select logits for MMLU options
+        logits = torch.tensor([x[self.token_ids[option]] for option in OPTIONS], device=x.device)
 
-        return logits
+        # Verify the top token id is one of the valid MMLU options
+        token_id = torch.argmax(x)
+        if token_id not in self.token_ids.values():
+            logger.warning(f"Top token id {token_id} is not in MMLU options {self.token_ids.values()}")
+            logger.warning(f"{token_id} = {x[token_id]}, vs, {logits}")
+
+        # Convert to scores
+        scores = softmax(logits, dim=-1)
+
+        # Map options to scores
+        scores = {option: scores[i] for i, option in enumerate(OPTIONS)}
+
+        # Convert scores back to floats
+        scores = {k: v.item() for k, v in scores.items()}
+
+        return scores
 
 
 class MMLULlamaModel(nn.Module):
@@ -98,12 +114,12 @@ class MMLULlamaModel(nn.Module):
             x = layer(x, r_cos, r_sin)
 
         # Head
-        logits = self.head(x)
+        scores = self.head(x)
 
         # Calculate answer
-        actual = max(logits, key=logits.get)
+        actual = max(scores, key=scores.get)
 
-        return logits, actual
+        return scores, actual
 
 
 class MMLULlamaGenerator:
@@ -137,13 +153,13 @@ class MMLULlamaGenerator:
                     x = torch.tensor(token_ids, device=self.config.device)
 
                     # Generate answer
-                    logits, actual = self.model(x, r_cos, r_sin)
+                    scores, actual = self.model(x, r_cos, r_sin)
 
                 # Yield answer
                 yield Answer(
                     qid=qid,
                     expected=question.answer,
                     actual=actual,
-                    logits=logits,
+                    scores=scores,
                     correct=(actual == question.answer),
                 )

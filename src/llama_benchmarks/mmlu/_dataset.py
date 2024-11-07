@@ -17,7 +17,7 @@ __all__ = [
     "swap_answers",
 ]
 
-OPTIONS = ["A", "B", "C", "D"]
+OPTIONS = tuple(["A", "B", "C", "D"])
 
 
 class Question(NamedTuple):
@@ -50,7 +50,7 @@ class Answer(NamedTuple):
 
     actual: str
 
-    logits: dict[str, float]
+    scores: dict[str, float]
 
     correct: bool
 
