@@ -66,10 +66,10 @@ class MMLULlamaHead(nn.Module):
         return logits
 
 
-class MMLULlamaGenerator:
-    """Custom Llama generative model for MMLU."""
+class MMLULlamaModel(nn.Module):
+    def __init__(self, config: Config, tokenizer: Tokenizer):
+        super().__init__()
 
-    def __init__(self, config: Config):
         # Load checkpoint
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
@@ -77,8 +77,6 @@ class MMLULlamaGenerator:
         )
 
         self.config = config
-
-        self.tokenizer = Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
 
         self.embeddings = nn.Embedding(
             num_embeddings=config.vocab_size,
@@ -89,42 +87,63 @@ class MMLULlamaGenerator:
 
         self.layers = nn.ModuleList(LlamaLayer(config, checkpoint, layer_id) for layer_id in range(config.n_layers))
 
-        self.head = MMLULlamaHead(config, checkpoint, self.tokenizer)
+        self.head = MMLULlamaHead(config, checkpoint, tokenizer)
+
+    def forward(self, x: Tensor, r_cos: Tensor, r_sin: Tensor):
+        # Map tokens to embeddings
+        x = self.embeddings(x)
+
+        # Transform token embeddings to semantic embeddings
+        for layer in self.layers:
+            x = layer(x, r_cos, r_sin)
+
+        # Head
+        logits = self.head(x)
+
+        # Calculate answer
+        actual = max(logits, key=logits.get)
+
+        return logits, actual
+
+
+class MMLULlamaGenerator:
+    """Custom Llama generative model for MMLU."""
+
+    def __init__(self, config: Config):
+        self.config = config
+
+        self.tokenizer = Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
+
+        self.model = MMLULlamaModel(config, self.tokenizer).to(config.device)
 
     def __call__(self, examples: Questions, questions: Questions) -> Iterator[Answer]:
         """Generate answers."""
-        for qid, question in enumerate(questions):
-            with trace(logger, f"Answering question {qid}"):
-                # Generate prompt
-                prompt = generate_prompt(examples, question)
+        # Prepare model
+        self.model.eval()
 
-                # Split raw text into tokens
-                token_ids = self.tokenizer.encode(prompt, bos=True, eos=False)
+        with torch.no_grad():
+            for qid, question in enumerate(questions):
+                with trace(logger, f"Answering question {qid}"):
+                    # Generate prompt
+                    prompt = generate_prompt(examples, question)
 
-                # Compute cos and sin rotation matrices
-                r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
+                    # Split raw text into tokens
+                    token_ids = self.tokenizer.encode(prompt, bos=True, eos=False)
 
-                # Load token ids into a tensor
-                x = torch.tensor(token_ids, device=self.config.device)
+                    # Compute cos and sin rotation matrices
+                    r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
 
-                # Map tokens to embeddings
-                x = self.embeddings(x)
+                    # Load token ids into a tensor
+                    x = torch.tensor(token_ids, device=self.config.device)
 
-                # Transform token embeddings to semantic embeddings
-                for layer in self.layers:
-                    x = layer(x, r_cos, r_sin)
+                    # Generate answer
+                    logits, actual = self.model(x, r_cos, r_sin)
 
-                # Head
-                logits = self.head(x)
-
-                # Calculate answer
-                actual = max(logits, key=logits.get)
-
-            # Yield answer
-            yield Answer(
-                qid=qid,
-                expected=question.answer,
-                actual=actual,
-                logits=logits,
-                correct=(actual == question.answer),
-            )
+                # Yield answer
+                yield Answer(
+                    qid=qid,
+                    expected=question.answer,
+                    actual=actual,
+                    logits=logits,
+                    correct=(actual == question.answer),
+                )

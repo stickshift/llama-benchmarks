@@ -408,10 +408,12 @@ class LlamaHead(nn.Module):
         return token_id.item()
 
 
-class LlamaGenerator:
-    """General purpose Llama generative model."""
+class LlamaModel(nn.Module):
+    """Container module for embeddings, layers, and head."""
 
     def __init__(self, config: Config):
+        super().__init__()
+
         # Load checkpoint
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
@@ -419,8 +421,6 @@ class LlamaGenerator:
         )
 
         self.config = config
-
-        self.tokenizer = Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
 
         self.embeddings = nn.Embedding(
             num_embeddings=config.vocab_size,
@@ -433,35 +433,56 @@ class LlamaGenerator:
 
         self.head = LlamaHead(config, checkpoint)
 
+    def forward(self, x: Tensor, r_cos: Tensor, r_sin: Tensor) -> int:
+        # Map tokens to embeddings
+        x = self.embeddings(x)
+
+        # Transform token embeddings to semantic embeddings
+        for layer in self.layers:
+            x = layer(x, r_cos, r_sin)
+
+        # Head
+        token_id = self.head(x)
+
+        return token_id
+
+
+class LlamaGenerator:
+    """General purpose Llama generative model."""
+
+    def __init__(self, config: Config):
+        self.config = config
+
+        self.tokenizer = Tokenizer(str(config.checkpoint_path / "tokenizer.model"))
+
+        self.model = LlamaModel(config).to(config.device)
+
     def __call__(self, prompt: str) -> Iterator[int]:
         """Generate tokens from prompt."""
+        # Prepare model
+        self.model.eval()
+
         # Split raw text into tokens
         token_ids = self.tokenizer.encode(prompt, bos=True, eos=False, allowed_special="all")
 
-        # Generate output until we get a stop token or we exceed max_output_tokens.
-        for _ in range(self.config.max_output_tokens):
-            # Compute cos and sin rotation matrices once for entire sequence
-            r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
+        with torch.no_grad():
+            # Generate output until we get a stop token or we exceed max_output_tokens.
+            for _ in range(self.config.max_output_tokens):
+                # Compute cos and sin rotation matrices once for entire sequence
+                r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
 
-            # Load token ids into a tensor
-            x = torch.tensor(token_ids, device=self.config.device)
+                # Load token ids into a tensor
+                x = torch.tensor(token_ids, device=self.config.device)
 
-            # Map tokens to embeddings
-            x = self.embeddings(x)
+                # Generate next token
+                token_id = self.model(x, r_cos, r_sin)
 
-            # Transform token embeddings to semantic embeddings
-            for layer in self.layers:
-                x = layer(x, r_cos, r_sin)
+                # Check stopping criteria
+                if token_id in self.tokenizer.stop_tokens:
+                    break
 
-            # Head
-            token_id = self.head(x)
+                # Yield token
+                yield token_id
 
-            # Check stopping criteria
-            if token_id in self.tokenizer.stop_tokens:
-                break
-
-            # Yield token
-            yield token_id
-
-            # Append to end of sequence
-            token_ids.append(token_id)
+                # Append to end of sequence
+                token_ids.append(token_id)
