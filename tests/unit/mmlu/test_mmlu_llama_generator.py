@@ -1,10 +1,12 @@
+import logging
 from pathlib import Path
-
-import pytest
+from time import perf_counter_ns as timer
 
 import llama_benchmarks as llb
 from llama_benchmarks.mmlu import MMLULlamaGenerator, OPTIONS
 from llama_benchmarks.models import llama
+
+logger = logging.getLogger(__name__)
 
 
 def test_mmlu_llama_generator(mmlu_dataset_path: Path):
@@ -12,8 +14,8 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
     # Givens
     #
 
-    # Sample size of 4
-    n_questions = 4
+    # Sample size of 8
+    n_questions = 8
 
     # I loaded question sample from mmlu dataset
     examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
@@ -24,6 +26,9 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
     #
     # Whens
     #
+
+    # I start timer
+    start_time = timer()
 
     # I generate answers for each question
     for answer in generator(examples, questions):
@@ -43,3 +48,11 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
 
         # Correct should be True if expected matches actual
         assert answer.correct == (answer.expected == answer.actual)
+
+    # I end timer
+    duration = timer() - start_time
+
+    # I calculate metrics
+    rps = 1000000000 * n_questions / duration
+
+    logger.info(f"RPS: {rps:.2f}")
