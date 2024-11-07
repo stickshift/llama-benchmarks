@@ -158,14 +158,15 @@ def rope_rotate(x, r_cos, r_sin):
 
 
 class LlamaLayer(nn.Module):
-
     def __init__(self, config: Config, checkpoint: dict[str, Any], layer_id: int):
         super().__init__()
 
         self.config = config
 
         # Attention normalization
-        self.normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_attention = RMSNorm(config.d_model, config.rms_norm_eps).to(
+            config.device
+        )
         self.normalize_attention.load_state_dict({
             "weight": checkpoint[f"layers.{layer_id}.attention_norm.weight"],
         })
@@ -215,7 +216,9 @@ class LlamaLayer(nn.Module):
         })
 
         # FFN normalization
-        self.normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_ffn = RMSNorm(config.d_model, config.rms_norm_eps).to(
+            config.device
+        )
         self.normalize_ffn.load_state_dict({
             "weight": checkpoint[f"layers.{layer_id}.ffn_norm.weight"],
         })
@@ -252,7 +255,9 @@ class LlamaLayer(nn.Module):
             "weight": checkpoint[f"layers.{layer_id}.feed_forward.w2.weight"],
         })
 
-    def forward(self, x: Tensor, r_cos: Tensor, r_sin: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, r_cos: Tensor, r_sin: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor]:
         #
         # Attention
         #
@@ -282,13 +287,18 @@ class LlamaLayer(nn.Module):
 
         # Compute masked attention bias M
         n = len(x)
-        mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(diagonal=0)
+        mask = torch.ones(n, n, dtype=torch.bool, device=self.config.device).tril(
+            diagonal=0
+        )
         m = torch.zeros(n, n, device=self.config.device).masked_fill_(
             mask.logical_not(), float("-inf")
         )
 
         # Compute attention for all heads in parallel
-        a = softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1) @ v
+        a = (
+            softmax(q @ k.transpose(-2, -1) / np.sqrt(self.config.d_head) + m, dim=-1)
+            @ v
+        )
 
         # Combine attention heads
         a = self._combine_heads(a)
@@ -322,7 +332,11 @@ class LlamaLayer(nn.Module):
         return x.view(-1, n_heads, self.config.d_head).transpose(-3, -2)
 
     def _combine_heads(self, x):
-        return x.transpose(-3, -2).contiguous().view(-1, int(self.config.n_heads * self.config.d_head))
+        return (
+            x.transpose(-3, -2)
+            .contiguous()
+            .view(-1, int(self.config.n_heads * self.config.d_head))
+        )
 
 
 class LlamaHead(nn.Module):
@@ -334,7 +348,9 @@ class LlamaHead(nn.Module):
         self.config = config
 
         # Head normalization
-        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(
+            config.device
+        )
         self.normalize_head.load_state_dict({
             "weight": checkpoint["norm.weight"],
         })
@@ -351,7 +367,6 @@ class LlamaHead(nn.Module):
         })
 
     def forward(self, x: Tensor) -> int:
-
         # Normalize head inputs
         x = self.normalize_head(x)
 
@@ -414,7 +429,6 @@ class LlamaGenerator:
     """General purpose Llama generative model."""
 
     def __init__(self, config: Config):
-
         # Load checkpoint
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
@@ -433,7 +447,10 @@ class LlamaGenerator:
         )
         self.embeddings.load_state_dict({"weight": checkpoint["tok_embeddings.weight"]})
 
-        self.layers = nn.ModuleList(LlamaLayer(config, checkpoint, l) for l in range(config.n_layers))
+        self.layers = nn.ModuleList(
+            LlamaLayer(config, checkpoint, layer_id)
+            for layer_id in range(config.n_layers)
+        )
 
         self.head = LlamaHead(config, checkpoint)
 
@@ -441,11 +458,12 @@ class LlamaGenerator:
         """Generate tokens from prompt."""
 
         # Split raw text into tokens
-        token_ids = self.tokenizer.encode(prompt, bos=True, eos=False, allowed_special="all")
+        token_ids = self.tokenizer.encode(
+            prompt, bos=True, eos=False, allowed_special="all"
+        )
 
         # Generate output until we get a stop token or we exceed max_output_tokens.
         for _ in range(self.config.max_output_tokens):
-
             # Compute cos and sin rotation matrices once for entire sequence
             r_cos, r_sin = rope_frequencies(self.config, len(token_ids))
 

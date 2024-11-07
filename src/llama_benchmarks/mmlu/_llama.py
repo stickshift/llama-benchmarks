@@ -4,9 +4,12 @@ from typing import Iterator, Any
 from llama_models.llama3.api.tokenizer import Tokenizer
 import torch
 from torch import nn, Tensor
-from torch.nn.functional import softmax
 
-from llama_benchmarks.models.llama import Config, LlamaLayer, LlamaHead, rope_frequencies
+from llama_benchmarks.models.llama import (
+    Config,
+    LlamaLayer,
+    rope_frequencies,
+)
 from llama_models.llama3.reference_impl.model import RMSNorm
 
 from ._dataset import Questions, Answer, generate_prompt, OPTIONS
@@ -21,13 +24,17 @@ logger = logging.getLogger(__name__)
 class MMLULlamaHead(nn.Module):
     """Custom Llama head for MMLU."""
 
-    def __init__(self, config: Config, checkpoint: dict[str, Any], tokenizer: Tokenizer):
+    def __init__(
+        self, config: Config, checkpoint: dict[str, Any], tokenizer: Tokenizer
+    ):
         super().__init__()
 
         self.config = config
 
         # Head normalization
-        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(config.device)
+        self.normalize_head = RMSNorm(config.d_model, config.rms_norm_eps).to(
+            config.device
+        )
         self.normalize_head.load_state_dict({
             "weight": checkpoint["norm.weight"],
         })
@@ -45,11 +52,11 @@ class MMLULlamaHead(nn.Module):
 
         # Calculate token ids for each MMLU option
         self.token_ids = {
-            option: tokenizer.encode(option, bos=False, eos=False)[0] for option in OPTIONS
+            option: tokenizer.encode(option, bos=False, eos=False)[0]
+            for option in OPTIONS
         }
 
     def forward(self, x: Tensor):
-
         # Normalize head inputs
         x = self.normalize_head(x)
 
@@ -69,7 +76,6 @@ class MMLULlamaGenerator:
     """Custom Llama generative model for MMLU."""
 
     def __init__(self, config: Config):
-
         # Load checkpoint
         checkpoint = torch.load(
             config.checkpoint_path / "consolidated.00.pth",
@@ -88,7 +94,10 @@ class MMLULlamaGenerator:
         )
         self.embeddings.load_state_dict({"weight": checkpoint["tok_embeddings.weight"]})
 
-        self.layers = nn.ModuleList(LlamaLayer(config, checkpoint, l) for l in range(config.n_layers))
+        self.layers = nn.ModuleList(
+            LlamaLayer(config, checkpoint, layer_id)
+            for layer_id in range(config.n_layers)
+        )
 
         self.head = MMLULlamaHead(config, checkpoint, self.tokenizer)
 
@@ -96,7 +105,6 @@ class MMLULlamaGenerator:
         """Generate answers."""
 
         for qid, question in enumerate(questions):
-
             # Generate prompt
             prompt = generate_prompt(examples, question)
 

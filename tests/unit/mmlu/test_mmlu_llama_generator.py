@@ -18,7 +18,9 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
     n_questions = 8
 
     # I loaded question sample from mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
+    examples, questions = llb.mmlu.load_dataset(
+        mmlu_dataset_path, n_questions=n_questions
+    )
 
     # I created a Llama 3.2 3B MMLU generator
     generator = MMLULlamaGenerator(llama.config("Llama3.2-3B"))
@@ -32,7 +34,6 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
 
     # I generate answers for each question
     for answer in generator(examples, questions):
-
         #
         # Thens
         #

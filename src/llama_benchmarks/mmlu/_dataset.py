@@ -22,6 +22,7 @@ OPTIONS = ["A", "B", "C", "D"]
 
 class Question(NamedTuple):
     """Represents an MMLU question."""
+
     category: str
 
     question: str
@@ -42,6 +43,7 @@ Questions = Sequence[Question]
 
 class Answer(NamedTuple):
     """Represents an answer to MMLU question."""
+
     qid: int
 
     expected: str
@@ -56,7 +58,10 @@ class Answer(NamedTuple):
 Answers = Sequence[Answer]
 
 
-def load_dataset(dataset_path: Path, n_questions: int | None = None,) -> tuple[Questions, Questions]:
+def load_dataset(
+    dataset_path: Path,
+    n_questions: int | None = None,
+) -> tuple[Questions, Questions]:
     """Load MMLU examples and questions."""
 
     examples = _load_segment("dev", dataset_path=dataset_path)
@@ -101,13 +106,14 @@ def swap_answers(questions: Questions, option: str) -> Questions:
 def answer_distribution(questions: Questions) -> dict[str, int]:
     """Calculate answer distribution for questions."""
     distribution = {
-        option: sum(1 for q in questions if q.answer == option)
-        for option in OPTIONS
+        option: sum(1 for q in questions if q.answer == option) for option in OPTIONS
     }
     return distribution
 
 
-def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None):
+def generate_prompt(
+    examples: Questions, question: Question, n_shots: int | None = None
+):
     """Generate prompt for specified question."""
     # Select examples for category
     selected_examples = [e for e in examples if e.category == question.category]
@@ -149,7 +155,6 @@ def generate_prompt(examples: Questions, question: Question, n_shots: int | None
 # -------------------------------------------------------------------------------
 # Utilities
 # -------------------------------------------------------------------------------
-
 
 
 def _load_data_file(path: Path) -> Sequence[Question]:

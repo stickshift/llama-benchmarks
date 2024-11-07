@@ -62,7 +62,9 @@ def test_load_dataset_sample(mmlu_dataset_path: Path):
     #
 
     # I load sample of mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
+    examples, questions = llb.mmlu.load_dataset(
+        mmlu_dataset_path, n_questions=n_questions
+    )
 
     #
     # Thens
@@ -82,7 +84,7 @@ def test_swap_answers(mmlu_dataset_path: Path):
     #
 
     # I load mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path)
+    _, questions = llb.mmlu.load_dataset(mmlu_dataset_path)
 
     #
     # Thens

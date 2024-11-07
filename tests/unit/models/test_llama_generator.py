@@ -3,7 +3,6 @@ from llama_benchmarks.models.llama import LlamaGenerator
 
 
 def test_config():
-
     #
     # Whens
     #
