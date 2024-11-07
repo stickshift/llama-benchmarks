@@ -11,7 +11,6 @@ from llama_benchmarks.models.llama import (
     LlamaLayer,
     rope_frequencies,
 )
-
 from llama_benchmarks.tools import trace
 
 from ._dataset import OPTIONS, Answer, Questions, generate_prompt

@@ -2,8 +2,6 @@ import logging
 from pathlib import Path
 from time import perf_counter_ns as timer
 
-import torch
-
 import llama_benchmarks as llb
 from llama_benchmarks.mmlu import OPTIONS, MMLULlamaGenerator
 from llama_benchmarks.models import llama
