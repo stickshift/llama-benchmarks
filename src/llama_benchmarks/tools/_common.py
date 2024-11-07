@@ -31,7 +31,14 @@ def random_string(length: int | None = None) -> str:
 
 def shell(command: str) -> str:
     """Run shell command."""
-    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    result = subprocess.run(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
     if result.returncode != 0:
         raise Exception(f"Command failed with error: {result.stderr}")
 

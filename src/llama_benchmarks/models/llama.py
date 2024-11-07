@@ -26,6 +26,7 @@ __all__ = [
 
 class Config(BaseModel):
     """Custom Llama3 config."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     device: torch.device
@@ -46,7 +47,9 @@ class Config(BaseModel):
     max_output_tokens: int = 500
 
 
-def config(checkpoint_name: str, device: torch.device, max_seq_len: int | None = None, **kwargs) -> Config:
+def config(
+    checkpoint_name: str, device: torch.device, max_seq_len: int | None = None, **kwargs
+) -> Config:
     """Load Llama3 config from checkpoint."""
     # Defaults
     max_seq_len = default_arg(max_seq_len, lambda: 8192)
@@ -228,7 +231,9 @@ def split_heads(config: Config, x, n_heads):
 
 
 def combine_heads(config: Config, x):
-    return x.transpose(-3, -2).contiguous().view(-1, int(config.n_heads * config.d_head))
+    return (
+        x.transpose(-3, -2).contiguous().view(-1, int(config.n_heads * config.d_head))
+    )
 
 
 def context_layers(x, *, config: Config, checkpoint):
@@ -295,15 +300,24 @@ def context_layers(x, *, config: Config, checkpoint):
     for layer in range(config.n_layers):
         # Load pre-trained state for layer
         load_state(
-            normalize_attention, "normalize_attention",
-            w_q, "w_q",
-            w_k, "w_k",
-            w_v, "w_v",
-            w_a, "w_a",
-            normalize_ffn, "normalize_ffn",
-            w_g, "w_g",
-            w_h, "w_h",
-            w_f, "w_f",
+            normalize_attention,
+            "normalize_attention",
+            w_q,
+            "w_q",
+            w_k,
+            "w_k",
+            w_v,
+            "w_v",
+            w_a,
+            "w_a",
+            normalize_ffn,
+            "normalize_ffn",
+            w_g,
+            "w_g",
+            w_h,
+            "w_h",
+            w_f,
+            "w_f",
             checkpoint=checkpoint,
             layer=layer,
         )
@@ -338,7 +352,9 @@ def context_layers(x, *, config: Config, checkpoint):
         # Compute masked attention bias M
         n = len(x)
         mask = torch.ones(n, n, dtype=torch.bool, device=config.device).tril(diagonal=0)
-        m = torch.zeros(n, n, device=config.device).masked_fill_(mask.logical_not(), float("-inf"))
+        m = torch.zeros(n, n, device=config.device).masked_fill_(
+            mask.logical_not(), float("-inf")
+        )
 
         # Compute attention for all heads in parallel
         a = softmax(q @ k.transpose(-2, -1) / np.sqrt(config.d_head) + m, dim=-1) @ v
@@ -386,8 +402,10 @@ def head(x, *, config: Config, checkpoint):
 
     # Load pre-trained weights
     load_state(
-        normalize_head, "normalize_head",
-        w_head, "w_head",
+        normalize_head,
+        "normalize_head",
+        w_head,
+        "w_head",
         checkpoint=checkpoint,
     )
 
@@ -422,7 +440,7 @@ def head(x, *, config: Config, checkpoint):
     #
 
     # Retain top k tokens
-    probs = probs[:config.top_k]
+    probs = probs[: config.top_k]
 
     #
     # Top P
@@ -434,7 +452,7 @@ def head(x, *, config: Config, checkpoint):
 
     # Only apply threshold if top_p was exceeded
     if cumulative_mask.any():
-        probs = probs[:threshold_index + 1]
+        probs = probs[: threshold_index + 1]
 
     #
     # Random Selection
