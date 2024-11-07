@@ -1,10 +1,16 @@
-from importlib.metadata import distribution
+from concurrent.futures import as_completed
+import csv
 from pathlib import Path
+import random
+from typing import NamedTuple, Sequence
 
-import pandas as pd
-from pandas import DataFrame
+from llama_benchmarks.tools import executor
 
 __all__ = [
+    "Question",
+    "Questions",
+    "Answer",
+    "Answers",
     "OPTIONS",
     "load_dataset",
     "answer_distribution",
@@ -14,16 +20,60 @@ __all__ = [
 OPTIONS = ["A", "B", "C", "D"]
 
 
-def load_dataset(dataset_path: Path) -> tuple[DataFrame, DataFrame]:
+class Question(NamedTuple):
+    """Represents an MMLU question."""
+    category: str
+
+    question: str
+
+    A: str
+
+    B: str
+
+    C: str
+
+    D: str
+
+    answer: str
+
+
+Questions = Sequence[Question]
+
+
+class Answer(NamedTuple):
+    """Represents an answer to MMLU question."""
+    qid: int
+
+    expected: str
+
+    actual: str
+
+    logits: dict[str, float]
+
+    correct: bool
+
+
+Answers = Sequence[Answer]
+
+
+def load_dataset(dataset_path: Path, n_questions: int | None = None,) -> tuple[Questions, Questions]:
     """Load MMLU examples and questions."""
 
     examples = _load_segment("dev", dataset_path=dataset_path)
+
     questions = _load_segment("test", dataset_path=dataset_path)
+
+    # Sample questions
+    if n_questions is not None:
+        questions = random.sample(questions, n_questions)
+
+        categories = set(q.category for q in questions)
+        examples = tuple(e for e in examples if e.category in categories)
 
     return examples, questions
 
 
-def swap_answers(questions: DataFrame, option: str) -> DataFrame:
+def swap_answers(questions: Questions, option: str) -> Questions:
     """Swap answers for all questions to option."""
 
     # Validate
@@ -31,53 +81,63 @@ def swap_answers(questions: DataFrame, option: str) -> DataFrame:
         raise ValueError(f"Invalid option: {option}")
 
     # Since the columns we're switching are different for each row, we have to swap them one by one
-    rows = []
-    for _, input_row in questions.iterrows():
-        # Clone input row
-        output_row = input_row.copy()
+    results = []
+    for question in questions:
+        # Convert to mutable dict
+        data = question._asdict()
 
-        value = output_row[option]
-        output_row[option] = output_row[output_row.answer]
-        output_row[output_row.answer] = value
-        output_row.answer = option
+        # Swap values
+        value = data[option]
+        data[option] = data[question.answer]
+        data[question.answer] = value
+        data["answer"] = option
 
-        rows.append(output_row)
+        # Append
+        results.append(Question(**data))
 
-    return DataFrame(rows)
+    return tuple(results)
 
 
-def answer_distribution(questions: DataFrame) -> dict[str, int]:
+def answer_distribution(questions: Questions) -> dict[str, int]:
     """Calculate answer distribution for questions."""
     distribution = {
-        option: questions[questions.answer == option].answer.count() for option in OPTIONS
+        option: sum(1 for q in questions if q.answer == option)
+        for option in OPTIONS
     }
     return distribution
 
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 # Utilities
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
-def _load_segment(segment: str, dataset_path: Path) -> DataFrame:
+
+
+def _load_data_file(path: Path) -> Sequence[Question]:
+    """Load a single MMLU data file."""
+
+    # Infer category from file name: x_y_z_test.csv -> x y z
+    category = " ".join(path.stem.split("_")[0:-1])
+
+    with open(path, "r") as csv_file:
+        reader = csv.reader(csv_file)
+        questions = tuple(Question(category, *row) for row in reader)
+
+    return questions
+
+
+def _load_segment(segment: str, dataset_path: Path) -> Sequence[Question]:
     """Load segment of MMLU dataset."""
-
-    column_names = ["question", "A", "B", "C", "D", "answer"]
 
     # Sort paths to ensure consistent order
     paths = sorted(path for path in dataset_path.glob(f"{segment}/*.csv"))
 
-    dataset = None
-    for path in paths:
-        # Load csv
-        df = pd.read_csv(path, names=column_names)
+    # Load data files in parallel
+    futures = [executor.submit(_load_data_file, path) for path in paths]
 
-        # Infer category from file name: x_y_z_test.csv -> x y z
-        df["category"] = " ".join(path.stem.split("_")[0:-1])
+    # Collect results
+    questions = ()
+    for future in as_completed(futures):
+        questions += future.result()
 
-        # Append
-        dataset = df if dataset is None else pd.concat([dataset, df], ignore_index=True)
-
-    # Pandas parses the word "None" as a NaN. Replace these with explicit string "None"
-    dataset = dataset.fillna("None")
-
-    return dataset
+    return questions

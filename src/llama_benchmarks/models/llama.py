@@ -11,7 +11,7 @@ import torch
 from torch import nn
 from torch.nn.functional import silu, softmax
 
-from llama_benchmarks.tools import default_arg, take
+from llama_benchmarks.tools import default_arg, take, device as torch_device
 
 __all__ = [
     "Config",
@@ -48,11 +48,15 @@ class Config(BaseModel):
 
 
 def config(
-    checkpoint_name: str, device: torch.device, max_seq_len: int | None = None, **kwargs
+    checkpoint_name: str,
+    device: torch.device | None = None,
+    max_seq_len: int | None = None,
+    **kwargs,
 ) -> Config:
     """Load Llama3 config from checkpoint."""
     # Defaults
-    max_seq_len = default_arg(max_seq_len, lambda: 8192)
+    device = default_arg(device, default_factory=torch_device)
+    max_seq_len = default_arg(max_seq_len, 8192)
 
     # Build checkpoint_path
     checkpoints_path = Path("~/.llama/checkpoints").expanduser()
