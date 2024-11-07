@@ -1,0 +1,10 @@
+.build
+.vscode
+.idea
+.venv
+__pycache__
+.ipynb_checkpoints
+project.env
+docs/_build
+docs/_modules
+demos
