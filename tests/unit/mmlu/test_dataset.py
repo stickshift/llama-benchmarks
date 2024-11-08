@@ -21,6 +21,9 @@ def test_load_dataset(mmlu_dataset_path: Path):
     # There should be 14,042 questions
     assert len(questions) == 14042
 
+    # ids should be unique
+    assert len({q.qid for q in questions}) == len(questions)
+
     # There should be 57 categories
     assert len({q.category for q in examples}) == 57
 

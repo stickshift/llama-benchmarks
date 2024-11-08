@@ -126,16 +126,16 @@ class MMLULlamaGenerator:
 
         self.model = MMLULlamaModel(config, self.tokenizer).to(config.device)
 
-    def __call__(self, examples: Questions, questions: Questions) -> Iterator[Answer]:
+    def __call__(self, examples: Questions, questions: Questions, n_shots: int | None = None) -> Iterator[Answer]:
         """Generate answers."""
         # Prepare model
         self.model.eval()
 
         with torch.no_grad():
-            for qid, question in enumerate(questions):
-                with trace(logger, f"Answering question {qid}"):
+            for question in questions:
+                with trace(logger, f"Answering question {question.qid}"):
                     # Generate prompt
-                    prompt = generate_prompt(examples, question)
+                    prompt = generate_prompt(examples, question, n_shots=n_shots)
 
                     # Split raw text into tokens
                     token_ids = self.tokenizer.encode(prompt, bos=True, eos=False)
@@ -151,7 +151,7 @@ class MMLULlamaGenerator:
 
                 # Yield answer
                 yield Answer(
-                    qid=qid,
+                    qid=question.qid,
                     expected=question.answer,
                     actual=actual,
                     scores=scores,

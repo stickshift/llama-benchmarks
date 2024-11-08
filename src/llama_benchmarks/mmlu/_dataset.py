@@ -3,7 +3,7 @@ from pathlib import Path
 import random
 from typing import NamedTuple, Sequence
 
-from llama_benchmarks.tools import executor
+from llama_benchmarks.tools import executor, default_arg
 
 __all__ = [
     "OPTIONS",
@@ -24,6 +24,8 @@ OPTIONS = tuple(["A", "B", "C", "D"])
 
 class Question(NamedTuple):
     """Represents an MMLU question."""
+
+    qid: int
 
     category: str
 
@@ -109,17 +111,24 @@ def answer_distribution(questions: Questions) -> dict[str, int]:
     return distribution
 
 
-def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None):
+def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None, header: bool | None = None):
     """Generate prompt for specified question."""
+    # Defaults
+    header = default_arg(header, True)
+
     # Select examples for category
     selected_examples = [e for e in examples if e.category == question.category]
 
-    # Select n_shots if specified
+    # Deterministically select n_shots if specified
     if n_shots is not None:
-        selected_examples = random.sample(selected_examples, n_shots)
+        selected_examples = selected_examples[:n_shots]
+
+    content = ""
 
     # Start with examples
-    content = f"The following are multiple choice questions (with answers) about {question.category}.\n\n"
+    if header:
+        content += f"The following are multiple choice questions (with answers) about {question.category}.\n\n"
+
     for row in selected_examples:
         content += (
             f"Question: {row.question}\n\nA) {row.A}\nB) {row.B}\nC) {row.C}\nD) {row.D}\n\nAnswer: {row.answer}\n\n"
@@ -142,35 +151,32 @@ def generate_prompt(examples: Questions, question: Question, n_shots: int | None
 
 def debias_example_answers(examples: Questions) -> Questions:
     """Evenly distribute example answers across options for each category."""
-    categories = {e.category for e in examples}
+    categories = tuple(e.category for e in examples)
 
-    # Select 4 examples per category
-    normalized = ()
+    # Deterministically select 4 examples per category
+    results = ()
     for category in categories:
         population = tuple(e for e in examples if e.category == category)
 
-        # Select 4 examples
-        selection = random.sample(population, 4)
+        # First 4 examples
+        selection = population[:4]
 
         # Move 25% of answers to each option
         segment_size = 1
         for i, option in enumerate(OPTIONS):
             segment = swap_answers(selection[i * segment_size : (i + 1) * segment_size], option)
-            normalized += segment
+            results += segment
 
-    # Shuffle
-    normalized = random.sample(normalized, len(normalized))
-
-    return normalized
+    return results
 
 
 def debias_question_answers(questions: Questions) -> Questions:
     """Evenly distribute question answers across options."""
     chunk_size = len(OPTIONS)
 
-    # Select maximal subset of questions that is multiple of chunk size
+    # Deterministically select maximal subset of questions that is multiple of chunk size
     n_questions = chunk_size * (len(questions) // chunk_size)
-    questions = random.sample(questions, n_questions)
+    questions = questions[:n_questions]
 
     # Move 25% of answers to each option
     normalized = ()
@@ -178,9 +184,6 @@ def debias_question_answers(questions: Questions) -> Questions:
     for i, option in enumerate(OPTIONS):
         segment = swap_answers(questions[i * segment_size: (i + 1) * segment_size], option)
         normalized += segment
-
-    # Shuffle
-    normalized = random.sample(normalized, len(normalized))
 
     return normalized
 
@@ -197,7 +200,7 @@ def _load_data_file(path: Path) -> Sequence[Question]:
 
     with open(path, mode="r", encoding="utf-8") as csv_file:
         reader = csv.reader(csv_file)
-        questions = tuple(Question(category, *row) for row in reader)
+        questions = tuple(Question(i, category, *row) for i, row in enumerate(reader))
 
     return questions
 
@@ -211,8 +214,13 @@ def _load_segment(segment: str, dataset_path: Path) -> Sequence[Question]:
     futures = [executor.submit(_load_data_file, path) for path in paths]
 
     # Collect results
-    questions = ()
+    collected = ()
     for future in futures:
-        questions += future.result()
+        collected += future.result()
 
-    return questions
+    # Reassign ids
+    questions = []
+    for i, question in enumerate(collected):
+        questions.append(Question(i, *question[1:]))
+
+    return tuple(questions)

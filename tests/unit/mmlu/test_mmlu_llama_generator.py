@@ -38,7 +38,8 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
         #
 
         # Expected answer should match question
-        assert answer.expected == questions[answer.qid].answer
+        question = next(q for q in questions if q.qid == answer.qid)
+        assert answer.expected == question.answer
 
         # Actual answer should be valid option
         assert answer.actual in OPTIONS
