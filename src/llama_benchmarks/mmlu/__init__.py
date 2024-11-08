@@ -8,6 +8,8 @@ from ._dataset import (
     generate_prompt,
     load_dataset,
     swap_answers,
+    debias_example_answers,
+    debias_question_answers,
 )
 from ._llama import MMLULlamaGenerator
 
@@ -22,4 +24,6 @@ __all__ = [
     "generate_prompt",
     "load_dataset",
     "swap_answers",
+    "debias_example_answers",
+    "debias_question_answers",
 ]

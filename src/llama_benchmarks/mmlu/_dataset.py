@@ -15,6 +15,8 @@ __all__ = [
     "generate_prompt",
     "load_dataset",
     "swap_answers",
+    "debias_example_answers",
+    "debias_question_answers",
 ]
 
 OPTIONS = tuple(["A", "B", "C", "D"])
@@ -136,6 +138,51 @@ def generate_prompt(examples: Questions, question: Question, n_shots: int | None
     )
 
     return content
+
+
+def debias_example_answers(examples: Questions) -> Questions:
+    """Evenly distribute example answers across options for each category."""
+    categories = {e.category for e in examples}
+
+    # Select 4 examples per category
+    normalized = ()
+    for category in categories:
+        population = tuple(e for e in examples if e.category == category)
+
+        # Select 4 examples
+        selection = random.sample(population, 4)
+
+        # Move 25% of answers to each option
+        segment_size = 1
+        for i, option in enumerate(OPTIONS):
+            segment = swap_answers(selection[i * segment_size : (i + 1) * segment_size], option)
+            normalized += segment
+
+    # Shuffle
+    normalized = random.sample(normalized, len(normalized))
+
+    return normalized
+
+
+def debias_question_answers(questions: Questions) -> Questions:
+    """Evenly distribute question answers across options."""
+    chunk_size = len(OPTIONS)
+
+    # Select maximal subset of questions that is multiple of chunk size
+    n_questions = chunk_size * (len(questions) // chunk_size)
+    questions = random.sample(questions, n_questions)
+
+    # Move 25% of answers to each option
+    normalized = ()
+    segment_size = int(n_questions / chunk_size)
+    for i, option in enumerate(OPTIONS):
+        segment = swap_answers(questions[i * segment_size: (i + 1) * segment_size], option)
+        normalized += segment
+
+    # Shuffle
+    normalized = random.sample(normalized, len(normalized))
+
+    return normalized
 
 
 # -------------------------------------------------------------------------------

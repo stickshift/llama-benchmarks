@@ -189,3 +189,74 @@ def test_generate_prompt(mmlu_dataset_path: Path):
         Answer: """
     ).lstrip()
     assert prompt == expected
+
+
+def test_debias_examples(mmlu_dataset_path: Path):
+    #
+    # Whens
+    #
+
+    # I load mmlu dataset
+    examples, _ = llb.mmlu.load_dataset(mmlu_dataset_path)
+
+    # I record categories
+    categories = {e.category for e in examples}
+
+    #
+    # Thens
+    #
+
+    # Answers should NOT be evenly distributed
+    for category in categories:
+        selected = tuple(e for e in examples if e.category == category)
+        distribution = llb.mmlu.answer_distribution(selected)
+        assert len(set(distribution.values())) > 1
+
+    #
+    # Whens
+    #
+
+    # I debias examples
+    examples = llb.mmlu.debias_example_answers(examples)
+
+    #
+    # Thens
+    #
+
+    # Answers should be evenly distributed
+    for category in categories:
+        selected = tuple(e for e in examples if e.category == category)
+        distribution = llb.mmlu.answer_distribution(selected)
+        assert len(set(distribution.values())) == 1
+
+
+def test_debias_questions(mmlu_dataset_path: Path):
+    #
+    # Whens
+    #
+
+    # I load mmlu dataset
+    _, questions = llb.mmlu.load_dataset(mmlu_dataset_path)
+
+    #
+    # Thens
+    #
+
+    # Answers should NOT be evenly distributed
+    distribution = llb.mmlu.answer_distribution(questions)
+    assert len(set(distribution.values())) > 1
+
+    #
+    # Whens
+    #
+
+    # I debias questions
+    questions = llb.mmlu.debias_question_answers(questions)
+
+    #
+    # Thens
+    #
+
+    # Answers should be evenly distributed
+    distribution = llb.mmlu.answer_distribution(questions)
+    assert len(set(distribution.values())) == 1
