@@ -2,7 +2,7 @@ import hashlib
 from itertools import islice
 from secrets import token_hex
 import subprocess
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 __all__ = [
     "default_arg",
@@ -13,12 +13,19 @@ __all__ = [
 ]
 
 
-def default_arg(x, default_factory):
-    """Shorthand for if x is None: x = default_factory()."""
-    if x is None:
+def default_arg[T](
+    v: T,
+    default: T | None = None,
+    default_factory: Callable[[], T] | None = None,
+):
+    """Populate default parameters."""
+    if v is not None:
+        return v
+
+    if default is None and default_factory is not None:
         return default_factory()
 
-    return x
+    return default
 
 
 def random_string(length: int | None = None) -> str:
@@ -31,7 +38,14 @@ def random_string(length: int | None = None) -> str:
 
 def shell(command: str) -> str:
     """Run shell command."""
-    result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    result = subprocess.run(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
     if result.returncode != 0:
         raise Exception(f"Command failed with error: {result.stderr}")
 
