@@ -1,9 +1,8 @@
 import csv
 from pathlib import Path
-import random
 from typing import NamedTuple, Sequence
 
-from llama_benchmarks.tools import executor, default_arg
+from llama_benchmarks.tools import default_arg, executor
 
 __all__ = [
     "OPTIONS",
@@ -12,11 +11,11 @@ __all__ = [
     "Question",
     "Questions",
     "answer_distribution",
+    "debias_example_answers",
+    "debias_question_answers",
     "generate_prompt",
     "load_dataset",
     "swap_answers",
-    "debias_example_answers",
-    "debias_question_answers",
 ]
 
 OPTIONS = tuple(["A", "B", "C", "D"])
@@ -64,21 +63,29 @@ Answers = Sequence[Answer]
 
 def load_dataset(
     dataset_path: Path,
-    n_questions: int | None = None,
-) -> tuple[Questions, Questions]:
+    segment: str | None = None,
+) -> Questions:
     """Load MMLU examples and questions."""
-    examples = _load_segment("dev", dataset_path=dataset_path)
+    # Defaults
+    segment = default_arg(segment, "test")
 
-    questions = _load_segment("test", dataset_path=dataset_path)
+    # Sort paths to ensure consistent order
+    paths = sorted(path for path in dataset_path.glob(f"{segment}/*.csv"))
 
-    # Sample questions
-    if n_questions is not None:
-        questions = random.sample(questions, n_questions)
+    # Load data files in parallel
+    futures = [executor.submit(_load_data_file, path) for path in paths]
 
-        categories = {q.category for q in questions}
-        examples = tuple(e for e in examples if e.category in categories)
+    # Collect results
+    collected = ()
+    for future in futures:
+        collected += future.result()
 
-    return examples, questions
+    # Reassign ids
+    questions = []
+    for i, question in enumerate(collected):
+        questions.append(Question(i, *question[1:]))
+
+    return tuple(questions)
 
 
 def swap_answers(questions: Questions, option: str) -> Questions:
@@ -111,16 +118,28 @@ def answer_distribution(questions: Questions) -> dict[str, int]:
     return distribution
 
 
-def generate_prompt(examples: Questions, question: Question, n_shots: int | None = None, header: bool | None = None):
+def generate_prompt(
+    question: Question,
+    *,
+    n_shots: int | None = None,
+    examples: Questions | None = None,
+    header: bool | None = None,
+):
     """Generate prompt for specified question."""
     # Defaults
-    header = default_arg(header, True)
+    n_shots = default_arg(n_shots, 0)
+    header = default_arg(header, False)
 
-    # Select examples for category
-    selected_examples = [e for e in examples if e.category == question.category]
+    # Validate
+    if n_shots > 0 and examples is None:
+        raise ValueError("n_shots specified without examples")
 
-    # Deterministically select n_shots if specified
-    if n_shots is not None:
+    selected_examples = None
+    if n_shots > 0:
+        # Select examples for category
+        selected_examples = [e for e in examples if e.category == question.category]
+
+        # Deterministically select n_shots if specified
         selected_examples = selected_examples[:n_shots]
 
     content = ""
@@ -129,10 +148,9 @@ def generate_prompt(examples: Questions, question: Question, n_shots: int | None
     if header:
         content += f"The following are multiple choice questions (with answers) about {question.category}.\n\n"
 
-    for row in selected_examples:
-        content += (
-            f"Question: {row.question}\n\nA) {row.A}\nB) {row.B}\nC) {row.C}\nD) {row.D}\n\nAnswer: {row.answer}\n\n"
-        )
+    if selected_examples:
+        for row in selected_examples:
+            content += f"Question: {row.question}\n\nA) {row.A}\nB) {row.B}\nC) {row.C}\nD) {row.D}\n\nAnswer: {row.answer}\n\n"
 
     # Pose question
     content += (
@@ -182,7 +200,7 @@ def debias_question_answers(questions: Questions) -> Questions:
     normalized = ()
     segment_size = int(n_questions / chunk_size)
     for i, option in enumerate(OPTIONS):
-        segment = swap_answers(questions[i * segment_size: (i + 1) * segment_size], option)
+        segment = swap_answers(questions[i * segment_size : (i + 1) * segment_size], option)
         normalized += segment
 
     return normalized
@@ -203,24 +221,3 @@ def _load_data_file(path: Path) -> Sequence[Question]:
         questions = tuple(Question(i, category, *row) for i, row in enumerate(reader))
 
     return questions
-
-
-def _load_segment(segment: str, dataset_path: Path) -> Sequence[Question]:
-    """Load segment of MMLU dataset."""
-    # Sort paths to ensure consistent order
-    paths = sorted(path for path in dataset_path.glob(f"{segment}/*.csv"))
-
-    # Load data files in parallel
-    futures = [executor.submit(_load_data_file, path) for path in paths]
-
-    # Collect results
-    collected = ()
-    for future in futures:
-        collected += future.result()
-
-    # Reassign ids
-    questions = []
-    for i, question in enumerate(collected):
-        questions.append(Question(i, *question[1:]))
-
-    return tuple(questions)

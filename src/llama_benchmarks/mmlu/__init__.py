@@ -5,11 +5,11 @@ from ._dataset import (
     Question,
     Questions,
     answer_distribution,
+    debias_example_answers,
+    debias_question_answers,
     generate_prompt,
     load_dataset,
     swap_answers,
-    debias_example_answers,
-    debias_question_answers,
 )
 from ._llama import MMLULlamaGenerator
 
@@ -21,9 +21,9 @@ __all__ = [
     "Question",
     "Questions",
     "answer_distribution",
+    "debias_example_answers",
+    "debias_question_answers",
     "generate_prompt",
     "load_dataset",
     "swap_answers",
-    "debias_example_answers",
-    "debias_question_answers",
 ]

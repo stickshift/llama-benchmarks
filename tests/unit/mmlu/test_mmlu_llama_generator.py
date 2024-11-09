@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from random import sample
 from time import perf_counter_ns as timer
 
 import llama_benchmarks as llb
@@ -18,7 +19,7 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
     n_questions = 8
 
     # I loaded question sample from mmlu dataset
-    examples, questions = llb.mmlu.load_dataset(mmlu_dataset_path, n_questions=n_questions)
+    questions = sample(llb.mmlu.load_dataset(mmlu_dataset_path), n_questions)
 
     # I created a Llama 3.2 3B MMLU generator
     generator = MMLULlamaGenerator(llama.config("Llama3.2-3B"))
@@ -32,7 +33,7 @@ def test_mmlu_llama_generator(mmlu_dataset_path: Path):
 
     # I generate answers for each question
     correct = 0
-    for answer in generator(examples, questions):
+    for answer in generator(questions):
         #
         # Thens
         #
